@@ -14,7 +14,7 @@ import {
 } from "../support/Strings";
 import { assert, defined } from "../support/Support";
 import { StringOption, BooleanOption, Option, OptionValues, getOptionValues } from "../RendererOptions";
-import { Sourcelike, maybeAnnotated, modifySource } from "../Source";
+import { Sourcelike, maybeAnnotated, modifySource, sourcelikeToSource } from "../Source";
 import { anyTypeIssueAnnotation, nullTypeIssueAnnotation } from "../Annotation";
 import { TargetLanguage } from "../TargetLanguage";
 import { ConvenienceRenderer } from "../ConvenienceRenderer";
@@ -26,7 +26,8 @@ export const goOptions = {
     packageName: new StringOption("package", "Generated package name", "NAME", "main"),
     multiFileOutput: new BooleanOption("multi-file-output", "Renders each top-level object in its own Go file", false),
     fieldTags: new StringOption("field-tags", "list of tags which should be generated for fields", "TAGS", "json"),
-    omitEmpty: new BooleanOption("omit-empty", "If set, all non-required objects will be tagged with ,omitempty", false)
+    omitEmpty: new BooleanOption("omit-empty", "If set, all non-required objects will be tagged with ,omitempty", false),
+    generateI18nifyStubs: new BooleanOption("generate-i18nify-stubs", "If set, all non-required objects will be tagged with ,omitempty", false)
 };
 
 export class GoTargetLanguage extends TargetLanguage {
@@ -40,7 +41,8 @@ export class GoTargetLanguage extends TargetLanguage {
             goOptions.packageName,
             goOptions.multiFileOutput,
             goOptions.justTypesAndPackage,
-            goOptions.fieldTags
+            goOptions.fieldTags,
+            goOptions.generateI18nifyStubs
         ];
     }
 
@@ -90,6 +92,13 @@ function isValueType(t: Type): boolean {
 function canOmitEmpty(cp: ClassProperty): boolean {
     if (!cp.isOptional) return false;
     if (goOptions.omitEmpty) return true;
+    const t = cp.type;
+    return ["union", "null", "any"].indexOf(t.kind) < 0;
+}
+
+function generate18nifyStubs(cp: ClassProperty): boolean {
+    if (!cp.isOptional) return false;
+    if (goOptions.generateI18nifyStubs) return true;
     const t = cp.type;
     return ["union", "null", "any"].indexOf(t.kind) < 0;
 }
@@ -170,6 +179,13 @@ export class GoRenderer extends ConvenienceRenderer {
     private emitStruct(name: Name, table: Sourcelike[][]): void {
         this.emitBlock(["type ", name, " struct"], () => this.emitTable(table));
     }
+
+    private emiti18nifyStubs(name: Name, table: Sourcelike[][]): void {
+        if (table.length === 0) return;
+        //TODO: parse table table and add getters for each item present in table.
+        this.emitFunc(["(r *", name, ") Get",name,"() ([]byte, error)"], () => {
+            this.emitLine("return r");
+        });    }
 
     private nullableGoType(t: Type, withIssues: boolean): Sourcelike {
         const goType = this.goType(t, withIssues);
@@ -286,6 +302,10 @@ export class GoRenderer extends ConvenienceRenderer {
         });
         this.emitDescription(this.descriptionForType(c));
         this.emitStruct(className, columns);
+        if (this._options.generateI18nifyStubs === true ) {
+            //TODO: Refer to JSON Schema and construct it.
+            this.emiti18nifyStubs(className, columns);
+        }
         this.endFile();
     }
 
