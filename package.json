@@ -12,7 +12,7 @@
         "pub": "script/publish.sh",
         "build": "npm run build --workspaces --if-present && tsc",
         "test": "script/test",
-        "start": "script/watch",
+        "start": "script/quicktype -s schema /Users/debanshu.rout/repo/i18nify/data/country/phone-number/country-code-to-phone-number/qt-schema.json -l go -o generator/country-phonenumber.go --generate-i18nify-stubs --package country_phonenumber",
         "clean": "rm -rf dist node_modules *~ packages/*/{dist,node_modules}",
         "debug": "node --inspect-brk --max-old-space-size=4096 ./dist/index.js"
     },

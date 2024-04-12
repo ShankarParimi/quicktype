@@ -1,6 +1,6 @@
 import { TypeKind, Type, ClassType, EnumType, UnionType, ClassProperty } from "../Type";
 import { matchType, nullableFromUnion, removeNullFromUnion } from "../TypeUtils";
-import { Name, DependencyName, Namer, funPrefixNamer } from "../Naming";
+import {Name, DependencyName, Namer, funPrefixNamer, SimpleName} from "../Naming";
 import {
     legalizeCharacters,
     isLetterOrUnderscore,
@@ -14,7 +14,15 @@ import {
 } from "../support/Strings";
 import { assert, defined } from "../support/Support";
 import { StringOption, BooleanOption, Option, OptionValues, getOptionValues } from "../RendererOptions";
-import { Sourcelike, maybeAnnotated, modifySource } from "../Source";
+import {
+    Sourcelike,
+    maybeAnnotated,
+    modifySource,
+    TextSource,
+    NewlineSource,
+    SequenceSource,
+    TableSource, AnnotatedSource, NameSource, ModifiedSource, SourcelikeArray
+} from "../Source";
 import { anyTypeIssueAnnotation, nullTypeIssueAnnotation } from "../Annotation";
 import { TargetLanguage } from "../TargetLanguage";
 import { ConvenienceRenderer } from "../ConvenienceRenderer";
@@ -26,7 +34,8 @@ export const goOptions = {
     packageName: new StringOption("package", "Generated package name", "NAME", "main"),
     multiFileOutput: new BooleanOption("multi-file-output", "Renders each top-level object in its own Go file", false),
     fieldTags: new StringOption("field-tags", "list of tags which should be generated for fields", "TAGS", "json"),
-    omitEmpty: new BooleanOption("omit-empty", "If set, all non-required objects will be tagged with ,omitempty", false)
+    omitEmpty: new BooleanOption("omit-empty", "If set, all non-required objects will be tagged with ,omitempty", false),
+    generateI18nifyStubs: new BooleanOption("generate-i18nify-stubs", "If set, all non-required objects will be tagged with ,omitempty", false)
 };
 
 export class GoTargetLanguage extends TargetLanguage {
@@ -40,7 +49,8 @@ export class GoTargetLanguage extends TargetLanguage {
             goOptions.packageName,
             goOptions.multiFileOutput,
             goOptions.justTypesAndPackage,
-            goOptions.fieldTags
+            goOptions.fieldTags,
+            goOptions.generateI18nifyStubs
         ];
     }
 
@@ -93,7 +103,6 @@ function canOmitEmpty(cp: ClassProperty): boolean {
     const t = cp.type;
     return ["union", "null", "any"].indexOf(t.kind) < 0;
 }
-
 export class GoRenderer extends ConvenienceRenderer {
     private readonly _topLevelUnmarshalNames = new Map<Name, Name>();
     private _currentFilename: string | undefined;
@@ -169,6 +178,124 @@ export class GoRenderer extends ConvenienceRenderer {
 
     private emitStruct(name: Name, table: Sourcelike[][]): void {
         this.emitBlock(["type ", name, " struct"], () => this.emitTable(table));
+    }
+
+    private emiti18nifyStubs(name: Name, table: Sourcelike[][]): void {
+        console.log("Test log : " + table);
+        if (table.length === 0) return;
+        // TODO: parse table table and add getters for each item present in table.
+        let attrMap = new Map<Sourcelike, Sourcelike>();
+        for (let i = 0; i < table.length; i++) {
+            const row = table[i];
+            this.ensureBlankLine();
+            this.emitFunc(["(r *", name, ") Get", row[0], "() ", row[1]], () => {
+                this.emitLine(["return r.", row[0]]);
+            });
+
+            attrMap.set(row[0], row[1]);
+
+            // this.emitFunc(["(r *", row[0], ") Set", row[0], "(data ", row[1], ")"], () => {
+            //     this.emitLine(["r.", row[0]], " = data");
+            // });
+
+            // for (let j = 0; j < row.length; j++) {
+            //     console.log("j : " + j);
+            //     const item = row[j];
+            //     console.log("item : " + item);
+            //     if(item.toString().toLowerCase().includes("json:")) {
+            //         continue;
+            //     }
+            //     this.emitFunc(["(r *", item, ") Get", item, "() ([]byte, error)"], () => {
+            //         this.emitLine("return r");
+            //     });
+            // }
+        }
+
+        this.emitConstructor(name, attrMap);
+    }
+
+    private emitConstructor(name: Name, attrMap: Map<Sourcelike, Sourcelike>) {
+        let test = "";
+
+        for (let attr of attrMap.entries()) {
+            let varName1 = this.convertToCamelCase(attr[0]);
+            let varName2 = this.getDataType(attr[1]);
+            if(this.isCustomType(attr[1])) {
+                // [...attr[0][0]._unstyledNames][0]
+                // @ts-ignore
+                console.log("sdfsdf", this.namerForObjectProperty().nameStyle("adsas_asdasd"));
+                // @ts-ignore
+                varName2 = varName2.concat(this.namerForObjectProperty().nameStyle([...attr[0][0]._unstyledNames][0]));
+            }
+            // let varName2 = this.getDataType(attr[1]);
+            // let varName2 = "string";
+            test = test.concat(varName1 + " " + varName2 + ", ");
+        }
+
+        test = test.slice(0, -2);
+
+        console.log("test : ",test);
+
+        this.ensureBlankLine();
+        this.emitFunc(["New", name, "(", test, ") *", name], () => {
+            this.emitLine(["return &", name, "{"]);
+            for (let attr of attrMap.entries()) {
+                console.log("camelxx: ",attr);
+                this.emitLine(["\t", [attr[0], ": ", this.convertToCamelCase(attr[0]), ","]]);
+            }
+            this.emitLine(["}"]);
+        });
+    }
+
+    private isCustomType(src: Sourcelike): boolean {
+        // @ts-ignore
+        if (typeof src[0][1] === "object") {
+            // @ts-ignore
+            // console.log("cameltttttttt : ", src[0][0]);
+            return true;
+        }
+
+        return false;
+    }
+
+    private getDataType(src: Sourcelike): string {
+
+        console.log("camel11 : ",src);
+        // @ts-ignore
+        // console.log("camel2 : ", JSON.stringify(src[0]));
+
+        // @ts-ignore
+        console.log("camel33 : ", src[0][0]);
+        // @ts-ignore
+        // console.log("camel4 : ", src[0]._unstyledNames.values().next().value);
+
+        if (typeof src[0][1] === "object") {
+            // @ts-ignore
+            console.log("cameltttttttt : ", src[0][0]);
+            // @ts-ignore
+            return src[0][0];
+        }
+
+        // @ts-ignore
+        return src[0];
+    }
+
+    private convertToCamelCase(src: Sourcelike) {
+
+        console.log("camel1 : ",src);
+        // @ts-ignore
+        // console.log("camel2 : ", JSON.stringify(src[0]));
+
+        // @ts-ignore
+        console.log("camel3 : ", [...src[0]._unstyledNames][0]);
+        // @ts-ignore
+        // console.log("camel4 : ", src[0]._unstyledNames.values().next().value);
+
+        // @ts-ignore
+        let str = [...src[0]._unstyledNames][0];
+        return str
+            .toLowerCase()
+            .replace(/([-_][a-z])/g, (group: string) => group.toUpperCase().replace("-", "").replace("_", ""));
     }
 
     private nullableGoType(t: Type, withIssues: boolean): Sourcelike {
@@ -286,6 +413,10 @@ export class GoRenderer extends ConvenienceRenderer {
         });
         this.emitDescription(this.descriptionForType(c));
         this.emitStruct(className, columns);
+        if (this._options.generateI18nifyStubs === true) {
+            // TODO: Refer to JSON Schema and construct it.
+            this.emiti18nifyStubs(className, columns);
+        }
         this.endFile();
     }
 
